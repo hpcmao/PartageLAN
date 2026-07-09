@@ -20,7 +20,10 @@ App macOS (SwiftUI) à ouvrir sur **les deux** machines (10.0.0.4 `vemao` et 10.
   déroulant (compte · IP · système), un clic sélectionne l'IP. Sélection automatique si un
   seul Mac répond.
 - **Icône barre de menus** (⬅➡ en haut de l'écran) : statut du pair + actions rapides
-  (ouvrir la fenêtre, tester, scanner, quitter).
+  (ouvrir la fenêtre, tester, scanner, quitter). L'app tourne en **arrière-plan** (agent) :
+  pas d'icône dans le Dock, fenêtre ouverte à la demande depuis l'icône.
+- **Terminal SSH** : champs `user@hôte` + `dossier distant` (mémorisés) et bouton
+  **Terminal SSH** qui ouvre Terminal.app en `ssh -t` et se place dans le dossier indiqué.
 - **Dossier de réception** configurable : y arrivent les fichiers poussés spontanément
   par l'autre machine (par défaut ~/Downloads).
 - **Persistance** : chemins des deux panneaux, dossier de réception, IP du pair, thème et
@@ -31,9 +34,11 @@ App macOS (SwiftUI) à ouvrir sur **les deux** machines (10.0.0.4 `vemao` et 10.
 ## Fonctionnement
 
 Chaque instance écoute en TCP sur le port **7365** et parle à l'IP « Autre machine »
-(pré-remplie 10.0.0.4 ↔ 10.0.0.5, mémorisée). Protocole : trame
-`[longueur UInt32 big-endian][JSON méta][octets]` ; types : clip, file, ping/pong, ls/lsr, get, err.
-Le pong et le lsr transportent compte + OS de la machine. Aucun besoin de SSH.
+(pré-remplie 10.0.0.4 ↔ 10.0.0.5, mémorisée). Le port 7365 est un simple choix (port haut
+libre) — modifiable via la constante `portNumber` (même valeur des deux côtés). Protocole :
+trame `[longueur UInt32 big-endian][JSON méta][octets]` ; types : clip, file, ping/pong,
+ls/lsr, get, err. Le pong et le lsr transportent compte + OS de la machine. Le partage lui-même
+n'utilise pas SSH (le bouton Terminal SSH est un raccourci indépendant).
 ⚠️ Les deux machines doivent avoir la même version de l'app.
 
 ## Installer / mettre à jour : PartageLAN.command
@@ -47,6 +52,7 @@ open PartageLAN/PartageLAN.command      # ou double-clic dans le Finder
 ```
 
 Le script fait tout : `git pull` (ou clonage dans ~/PartageLAN s'il est lancé seul),
+création d'un **certificat de signature stable** (`setup_signing.sh`, une fois par Mac),
 compilation (`build_app.sh` → app universelle arm64+x86_64), installation de
 **PartageLAN.app** et de **PartageLAN.command** dans /Applications, installation du
 **LaunchAgent** `fr.vemao.partagelan` (lancement automatique à chaque session), puis
@@ -54,8 +60,19 @@ lancement. Il mémorise l'emplacement du dépôt dans `~/.partagelan_repo`.
 
 **Mise à jour future** : double-clic sur `/Applications/PartageLAN.command`.
 
-1ʳᵉ ouverture : clic droit → Ouvrir si Gatekeeper proteste (signature ad hoc). Si le
-pare-feu demande « accepter les connexions entrantes » → Autoriser.
+### Signature stable (Little Snitch / Gatekeeper)
+
+L'app est signée avec un **certificat auto-signé stable** (`PartageLAN Self-Signed`, créé par
+`setup_signing.sh` dans le trousseau login). But : garder une signature **constante entre
+rebuilds** pour que **Little Snitch** (et Gatekeeper) conservent leurs règles au lieu de
+redemander une autorisation à chaque compilation. À défaut de certificat, repli sur ad-hoc.
+
+- Au tout 1ᵉ build après création du certif, macOS peut demander d'autoriser codesign à
+  utiliser la clé → cliquer **« Toujours autoriser »** (une fois).
+- La 1ʳᵉ fois seulement, autoriser **PartageLAN** dans **Little Snitch** (connexions
+  entrantes + sortantes sur le réseau local). Ensuite, plus de re-blocage aux mises à jour.
+- Le certificat doit être créé **localement** sur chaque Mac (le trousseau n'est pas
+  accessible via SSH) : lancer `./setup_signing.sh` sur place, ou simplement le `.command`.
 
 Désactiver le lancement automatique :
 `launchctl bootout gui/$(id -u)/fr.vemao.partagelan && rm ~/Library/LaunchAgents/fr.vemao.partagelan.plist`
