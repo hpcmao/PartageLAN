@@ -18,6 +18,8 @@ fi
 
 if [[ -f "$SCRIPT_DIR/Package.swift" ]]; then
     REPO="$SCRIPT_DIR"
+elif [[ -f "$HOME/.partagelan_repo" && -d "$(cat "$HOME/.partagelan_repo")/.git" ]]; then
+    REPO="$(cat "$HOME/.partagelan_repo")"   # dépôt mémorisé lors d'un passage précédent
 else
     REPO="$HOME/PartageLAN"
 fi
@@ -31,6 +33,8 @@ elif [[ -d "$REPO/.git" ]]; then
 fi
 
 cd "$REPO"
+echo "$REPO" > "$HOME/.partagelan_repo"
+
 echo "→ Compilation…"
 ./build_app.sh
 
@@ -39,10 +43,35 @@ pkill -x PartageLAN 2>/dev/null || true
 sleep 1
 rm -rf /Applications/PartageLAN.app
 cp -R dist/PartageLAN.app /Applications/
+cp -f "$REPO/PartageLAN.command" /Applications/PartageLAN.command
+chmod +x /Applications/PartageLAN.command
+
+echo "→ Lancement automatique au démarrage (LaunchAgent)…"
+AGENT="$HOME/Library/LaunchAgents/fr.vemao.partagelan.plist"
+mkdir -p "$HOME/Library/LaunchAgents"
+cat > "$AGENT" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>fr.vemao.partagelan</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-a</string>
+        <string>/Applications/PartageLAN.app</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+EOF
+launchctl bootout "gui/$(id -u)/fr.vemao.partagelan" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$AGENT" 2>/dev/null || true
 
 echo "→ Lancement…"
 open /Applications/PartageLAN.app
 
 echo ""
-echo "✓ PartageLAN est à jour et lancé (port 7365)."
+echo "✓ PartageLAN est à jour, lancé (port 7365) et se lancera à chaque démarrage."
+echo "  (Mise à jour future : double-clic sur /Applications/PartageLAN.command)"
 read -r "?Appuyez sur Entrée pour fermer cette fenêtre…"
