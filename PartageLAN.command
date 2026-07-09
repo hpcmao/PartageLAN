@@ -35,6 +35,9 @@ fi
 cd "$REPO"
 echo "$REPO" > "$HOME/.partagelan_repo"
 
+echo "→ Certificat de signature stable (si absent)…"
+./setup_signing.sh
+
 echo "→ Compilation…"
 ./build_app.sh
 

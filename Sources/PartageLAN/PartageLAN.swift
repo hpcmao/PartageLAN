@@ -154,6 +154,13 @@ final class PartageEngine: ObservableObject {
     @Published var receiveDirPath: String {
         didSet { UserDefaults.standard.set(receiveDirPath, forKey: "receiveDir") }
     }
+    /// Cible SSH mémorisée (user@hôte) et dossier distant, pour ouvrir un Terminal.
+    @Published var sshHost: String {
+        didSet { UserDefaults.standard.set(sshHost, forKey: "sshHost") }
+    }
+    @Published var sshDir: String {
+        didSet { UserDefaults.standard.set(sshDir, forKey: "sshDir") }
+    }
     @Published var status = "Démarrage…"
     @Published var journal: [String] = []
     @Published var remoteUser: String?
@@ -188,6 +195,8 @@ final class PartageEngine: ObservableObject {
         clipMode = ClipMode(rawValue: UserDefaults.standard.string(forKey: "clipMode") ?? "") ?? .both
         theme = Theme(rawValue: UserDefaults.standard.string(forKey: "theme") ?? "") ?? .system
         receiveDirPath = UserDefaults.standard.string(forKey: "receiveDir") ?? "~/Downloads"
+        sshHost = UserDefaults.standard.string(forKey: "sshHost") ?? ""
+        sshDir = UserDefaults.standard.string(forKey: "sshDir") ?? ""
         localPane.loader = { [weak self] p, done in self?.listLocal(p, completion: done) }
         remotePane.loader = { [weak self] p, done in self?.listRemote(p, completion: done) }
         startListener()
@@ -612,6 +621,40 @@ final class PartageEngine: ObservableObject {
             guard resp == .OK, let url = panel.urls.first else { return }
             DispatchQueue.main.async {
                 self?.receiveDirPath = (url.path as NSString).abbreviatingWithTildeInPath
+            }
+        }
+    }
+
+    /// Ouvre Terminal.app avec une session SSH vers `sshHost`, positionnée dans `sshDir` si fourni.
+    func openSSHTerminal() {
+        let host = sshHost.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else { log("SSH : renseigner d'abord user@hôte"); return }
+        let dir = sshDir.trimmingCharacters(in: .whitespaces)
+        // Partie distante entre quotes simples : cd (guillemets doubles pour gérer les espaces)
+        // puis shell de connexion interactif pour rester dans le dossier.
+        var command = "ssh -t \(host)"
+        if !dir.isEmpty {
+            command += " 'cd \"\(dir)\" && exec ${SHELL:-/bin/zsh} -l'"
+        }
+        // Échappement pour insertion dans une chaîne littérale AppleScript.
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let src = """
+        tell application "Terminal"
+            activate
+            do script "\(escaped)"
+        end tell
+        """
+        DispatchQueue.global().async { [weak self] in
+            var err: NSDictionary?
+            NSAppleScript(source: src)?.executeAndReturnError(&err)
+            DispatchQueue.main.async {
+                if let err {
+                    self?.log("Erreur ouverture Terminal SSH : \(err["NSAppleScriptErrorMessage"] ?? err)")
+                } else {
+                    self?.log("Terminal SSH ouvert : \(host)\(dir.isEmpty ? "" : " → \(dir)")")
+                }
             }
         }
     }
@@ -1043,6 +1086,32 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .help(engine.status)
+            }
+
+            HStack(spacing: 6) {
+                Text("SSH :")
+                    .font(.caption)
+                TextField("user@hôte", text: $engine.sshHost)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .frame(width: 160)
+                    .onSubmit { engine.openSSHTerminal() }
+                    .help("Compte et hôte SSH distant (ex : vemao@10.0.0.4). Mémorisé à la fermeture.")
+                TextField("dossier distant (optionnel)", text: $engine.sshDir)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .frame(width: 220)
+                    .onSubmit { engine.openSSHTerminal() }
+                    .help("Dossier où se placer après connexion (ex : /Users/vemao/Documents). Mémorisé à la fermeture.")
+                Button {
+                    engine.openSSHTerminal()
+                } label: {
+                    Label("Terminal SSH", systemImage: "terminal")
+                }
+                .controlSize(.small)
+                .disabled(engine.sshHost.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("Ouvrir Terminal et se connecter en SSH à l'hôte (dans le dossier si indiqué)")
+                Spacer()
             }
 
             HStack(alignment: .top, spacing: 6) {

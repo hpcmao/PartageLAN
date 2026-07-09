@@ -28,6 +28,16 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 
-codesign --force -s - "$APP"
+# Signature stable si le certif auto-signé est présent (Little Snitch/Gatekeeper gardent
+# leurs règles entre rebuilds) ; sinon repli sur ad-hoc.
+IDENTITY="PartageLAN Self-Signed"
+if security find-identity -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+    codesign --force -s "$IDENTITY" "$APP"
+    echo "Signé avec « $IDENTITY » (signature stable)."
+else
+    echo "⚠️  Certificat « $IDENTITY » absent → signature ad-hoc."
+    echo "   Créez-le une fois avec ./setup_signing.sh pour éviter que Little Snitch redemande à chaque build."
+    codesign --force -s - "$APP"
+fi
 ditto -c -k --keepParent "$APP" dist/PartageLAN.zip
 echo "OK → $APP  et  dist/PartageLAN.zip"
