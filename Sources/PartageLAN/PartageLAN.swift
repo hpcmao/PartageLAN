@@ -649,26 +649,33 @@ final class PartageEngine: ObservableObject {
         if !dir.isEmpty {
             command += " 'cd \"\(dir)\" && exec ${SHELL:-/bin/zsh} -l'"
         }
-        // Échappement pour insertion dans une chaîne littérale AppleScript.
-        let escaped = command
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let src = """
-        tell application "Terminal"
-            activate
-            do script "\(escaped)"
-        end tell
-        """
-        DispatchQueue.global().async { [weak self] in
-            var err: NSDictionary?
-            NSAppleScript(source: src)?.executeAndReturnError(&err)
-            DispatchQueue.main.async {
-                if let err {
-                    self?.log("Erreur ouverture Terminal SSH : \(err["NSAppleScriptErrorMessage"] ?? err)")
-                } else {
-                    self?.log("Terminal SSH ouvert : \(host)\(dir.isEmpty ? "" : " → \(dir)")")
-                }
-            }
+        // On écrit un script .command et on l'ouvre avec `open -a Terminal` plutôt que de
+        // piloter Terminal par Apple Events (NSAppleScript) : cela évite l'autorisation
+        // « Automatisation » que macOS exige sinon — prompt souvent absent/bloquant pour
+        // une app agent (LSUIElement), ce qui faisait échouer l'ouverture silencieusement.
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("partagelan_ssh_\(UUID().uuidString).command")
+        let body = "#!/bin/zsh\nclear\n\(command)\n"
+        do {
+            try body.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                  ofItemAtPath: scriptURL.path)
+        } catch {
+            log("Erreur préparation Terminal SSH : \(error.localizedDescription)")
+            return
+        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        proc.arguments = ["-a", "Terminal", scriptURL.path]
+        do {
+            try proc.run()
+            log("Terminal SSH ouvert : \(host)\(dir.isEmpty ? "" : " → \(dir)")")
+        } catch {
+            log("Erreur ouverture Terminal SSH : \(error.localizedDescription)")
+        }
+        // Nettoyage différé : Terminal a déjà chargé le script, on peut le supprimer.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+            try? FileManager.default.removeItem(at: scriptURL)
         }
     }
 
