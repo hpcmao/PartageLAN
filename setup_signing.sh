@@ -26,9 +26,15 @@ openssl req -x509 -newkey rsa:2048 -nodes \
     -addext "keyUsage=critical,digitalSignature" \
     -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
 
-# -legacy : algorithmes PKCS12 compatibles avec le trousseau macOS
-# (sans lui, l'import échoue avec « MAC verification failed »).
-openssl pkcs12 -export -legacy -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
+# PKCS12 en algos legacy, compatibles avec le trousseau macOS (sinon « MAC verification failed »).
+# OpenSSL 3 (Homebrew) a besoin de -legacy ; LibreSSL (système macOS) le fait par défaut
+# et ne connaît pas l'option → on ne l'ajoute que si openssl est bien OpenSSL 3.x.
+if openssl version | grep -qi "^OpenSSL 3"; then
+    LEGACY="-legacy"
+else
+    LEGACY=""
+fi
+openssl pkcs12 -export $LEGACY -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
     -out "$TMP/cert.p12" -passout pass:partagelan -name "$IDENTITY"
 
 # -A : autorise les outils (dont codesign) à utiliser la clé.
