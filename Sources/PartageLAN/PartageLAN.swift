@@ -663,6 +663,18 @@ final class PartageEngine: ObservableObject {
         if !dir.isEmpty { lines.append("echo \"  📁 Dossier : \(dir)\"") }
         lines.append(#"echo "══════════════════════════════════════════════""#)
         lines.append(command)
+        // Si ssh échoue (Session à distance non activée, mauvais compte/clé…), garder la
+        // fenêtre ouverte avec un message lisible au lieu de la refermer aussitôt.
+        lines.append("code=$?")
+        lines.append("if [ $code -ne 0 ]; then")
+        lines.append(#"  echo """#)
+        lines.append(#"  echo "⚠️  Connexion SSH échouée (code $code).""#)
+        lines.append(#"  echo "   • « Session à distance » (Remote Login) est-elle activée sur l'hôte ?""#)
+        lines.append(#"  echo "     Réglages Système → Général → Partage → Session à distance.""#)
+        lines.append(#"  echo "   • Compte / mot de passe ou clé SSH corrects ?""#)
+        lines.append(#"  echo """#)
+        lines.append(#"  printf "Appuyez sur une touche pour fermer… "; read -k1 -s"#)
+        lines.append("fi")
         let body = lines.joined(separator: "\n") + "\n"
         do {
             try body.write(to: scriptURL, atomically: true, encoding: .utf8)
