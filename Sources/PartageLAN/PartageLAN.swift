@@ -625,11 +625,24 @@ final class PartageEngine: ObservableObject {
         }
     }
 
-    /// Ouvre Terminal.app avec une session SSH vers `sshHost`, positionnée dans `sshDir` si fourni.
+    /// Ouvre Terminal.app avec une session SSH vers les champs mémorisés (barre du bas).
     func openSSHTerminal() {
-        let host = sshHost.trimmingCharacters(in: .whitespaces)
-        guard !host.isEmpty else { log("SSH : renseigner d'abord user@hôte"); return }
-        let dir = sshDir.trimmingCharacters(in: .whitespaces)
+        openSSHTerminal(host: sshHost.trimmingCharacters(in: .whitespaces),
+                        dir: sshDir.trimmingCharacters(in: .whitespaces))
+    }
+
+    /// Ouvre un Terminal SSH sur la machine distante (compte distant @ IP pair) dans `path`.
+    /// Utilisé par le clic droit sur le panneau distant.
+    func openRemoteSSH(path: String) {
+        let ip = peerIP.trimmingCharacters(in: .whitespaces)
+        // Compte distant connu via ping/lsr ; sinon ssh utilisera le compte local par défaut.
+        let host = remoteUser.map { "\($0)@\(ip)" } ?? ip
+        openSSHTerminal(host: host, dir: path)
+    }
+
+    /// Ouvre Terminal.app avec une session SSH vers `host`, positionnée dans `dir` si fourni.
+    func openSSHTerminal(host: String, dir: String) {
+        guard !host.isEmpty else { log("SSH : hôte manquant (renseigner user@hôte)"); return }
         // Partie distante entre quotes simples : cd (guillemets doubles pour gérer les espaces)
         // puis shell de connexion interactif pour rester dans le dossier.
         var command = "ssh -t \(host)"
@@ -828,6 +841,8 @@ struct PaneView: View {
     var onFileDoubleClick: ((Entry) -> Void)? = nil
     /// Si présent : accepte le dépôt de fichiers (URLs) sur le panneau.
     var onDropURLs: (([URL]) -> Void)? = nil
+    /// Panneau distant : clic droit sur une entrée → ouvrir un Terminal SSH à cet endroit.
+    var onOpenSSH: ((Entry) -> Void)? = nil
     /// Panneau distant : champ IP + bouton Tester dans l'en-tête.
     var peerIP: Binding<String>? = nil
     var onTest: (() -> Void)? = nil
@@ -953,6 +968,17 @@ struct PaneView: View {
                 .help(e.isDir ? "Double-clic : ouvrir le dossier « \(e.name) »"
                               : "Clic : sélectionner (⌘-clic : sélection multiple)"
                                 + (onFileDoubleClick != nil ? " — double-clic : récupérer le fichier" : ""))
+                .contextMenu {
+                    if let onOpenSSH {
+                        Button {
+                            onOpenSSH(e)
+                        } label: {
+                            Label(e.isDir ? "Ouvrir « \(e.name) » dans Terminal (SSH)"
+                                          : "Ouvrir ce dossier dans Terminal (SSH)",
+                                  systemImage: "terminal")
+                        }
+                    }
+                }
                 .tag(e.name)
             }
         }
@@ -1053,6 +1079,11 @@ struct ContentView: View {
                         engine.sendFiles(urls, destDir: engine.remotePane.path) {
                             engine.remotePane.reload()
                         }
+                    },
+                    onOpenSSH: { e in
+                        // Dossier : SSH dedans ; fichier : SSH dans le dossier courant.
+                        let path = e.isDir ? engine.remotePane.fullPath(e.name) : engine.remotePane.path
+                        engine.openRemoteSSH(path: path)
                     },
                     peerIP: $engine.peerIP,
                     onTest: { engine.ping() },
