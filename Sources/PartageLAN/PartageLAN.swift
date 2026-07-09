@@ -26,6 +26,14 @@ enum ClipMode: String, CaseIterable {
     case both, send, receive, off
 }
 
+/// Un Mac PartageLAN détecté sur le réseau local (répond au ping sur le port 7365).
+struct ScanHost: Identifiable, Equatable {
+    var id: String { ip }
+    let ip: String
+    let user: String
+    let os: String
+}
+
 enum Theme: String, CaseIterable, Identifiable {
     case system, clair, sombre, ocean, sepia
     var id: String { rawValue }
@@ -150,6 +158,8 @@ final class PartageEngine: ObservableObject {
     @Published var journal: [String] = []
     @Published var remoteUser: String?
     @Published var remoteOS: String?
+    @Published var scanResults: [ScanHost] = []
+    @Published var isScanning = false
     @Published var theme: Theme {
         didSet { UserDefaults.standard.set(theme.rawValue, forKey: "theme") }
     }
@@ -405,6 +415,98 @@ final class PartageEngine: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: Scan réseau
+
+    /// Sonde tout le sous-réseau /24 local pour trouver les autres Macs faisant tourner PartageLAN.
+    /// Remplit `scanResults` au fur et à mesure ; sélectionne l'IP automatiquement si un seul Mac répond.
+    func scanNetwork() {
+        guard !isScanning else { return }
+        guard let prefix = Self.subnetPrefix(localIP) else {
+            log("Scan impossible : IP locale inexploitable (\(localIP))")
+            return
+        }
+        DispatchQueue.main.async {
+            self.scanResults = []
+            self.isScanning = true
+        }
+        log("Scan du réseau \(prefix)x…")
+        // Toute la boucle part en fond : `gate.wait()` bloque, ne doit pas figer le fil principal.
+        DispatchQueue.global().async {
+            let group = DispatchGroup()
+            let gate = DispatchSemaphore(value: 32) // borne les connexions simultanées
+            let queue = DispatchQueue(label: "fr.vemao.partagelan.scan", attributes: .concurrent)
+            for i in 1...254 {
+                let ip = "\(prefix)\(i)"
+                if ip == self.localIP { continue }
+                gate.wait()
+                group.enter()
+                queue.async {
+                    self.pingHost(ip) { host in
+                        if let host {
+                            DispatchQueue.main.async {
+                                if !self.scanResults.contains(where: { $0.ip == host.ip }) {
+                                    self.scanResults.append(host)
+                                    // Tri par dernier octet pour un affichage stable.
+                                    self.scanResults.sort {
+                                        (Int($0.ip.split(separator: ".").last ?? "0") ?? 0)
+                                            < (Int($1.ip.split(separator: ".").last ?? "0") ?? 0)
+                                    }
+                                }
+                            }
+                            self.log("Trouvé : \(host.user) · \(host.ip) · \(host.os)")
+                        }
+                        gate.signal()
+                        group.leave()
+                    }
+                }
+            }
+            group.notify(queue: .main) {
+                self.isScanning = false
+                let n = self.scanResults.count
+                self.log("Scan terminé — \(n) Mac PartageLAN trouvé\(n > 1 ? "s" : "")")
+                if n == 1 { self.peerIP = self.scanResults[0].ip }
+            }
+        }
+    }
+
+    /// Ping un host arbitraire sur le port PartageLAN. Complétion = ScanHost si pong, nil sinon.
+    /// Indépendant de `peerIP`/`request` (qui visent le pair courant) — réservé au scan.
+    private func pingHost(_ ip: String, completion: @escaping (ScanHost?) -> Void) {
+        guard let port = NWEndpoint.Port(rawValue: portNumber) else { completion(nil); return }
+        let conn = NWConnection(host: NWEndpoint.Host(ip), port: port, using: .tcp)
+        let once = Once()
+        let finish: (ScanHost?) -> Void = { host in
+            once.run { conn.cancel(); completion(host) }
+        }
+        // Timeout court : jusqu'à 253 hôtes à sonder, on ne peut pas attendre longtemps par hôte.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { finish(nil) }
+        conn.stateUpdateHandler = { [weak self] st in
+            switch st {
+            case .ready:
+                guard let self else { finish(nil); return }
+                self.writeFrame(conn, Meta(type: "ping"), final: false) { ok in
+                    guard ok else { finish(nil); return }
+                    self.readFrame(conn) { resp in
+                        guard let resp, resp.type == "pong" else { finish(nil); return }
+                        finish(ScanHost(ip: ip, user: resp.name ?? "?", os: resp.text ?? "OS inconnu"))
+                    }
+                }
+            case .failed, .waiting:
+                finish(nil)
+            default:
+                break
+            }
+        }
+        conn.start(queue: .global())
+    }
+
+    /// Extrait le préfixe /24 d'une IPv4 ("10.0.0.42" → "10.0.0."), ou nil si non exploitable.
+    static func subnetPrefix(_ ip: String) -> String? {
+        let parts = ip.split(separator: ".")
+        guard parts.count == 4, parts.allSatisfy({ Int($0) != nil }) else { return nil }
+        return "\(parts[0]).\(parts[1]).\(parts[2])."
     }
 
     /// Envoie des fichiers locaux vers `destDir` sur l'autre Mac (nil = son dossier de réception).
@@ -686,6 +788,11 @@ struct PaneView: View {
     /// Panneau distant : champ IP + bouton Tester dans l'en-tête.
     var peerIP: Binding<String>? = nil
     var onTest: (() -> Void)? = nil
+    /// Panneau distant : scan réseau (bouton + menu des Macs détectés).
+    var scanResults: [ScanHost] = []
+    var isScanning: Bool = false
+    var onScan: (() -> Void)? = nil
+    var onSelectHost: ((String) -> Void)? = nil
 
     @State private var dropTargeted = false
 
@@ -710,6 +817,35 @@ struct PaneView: View {
                         .help("Adresse IP de la machine distante (l'app PartageLAN doit y être ouverte)")
                     Button("Tester") { onTest() }
                         .help("Vérifier que la machine distante répond, et récupérer son compte et son système")
+                    if let onScan, let onSelectHost {
+                        Menu {
+                            if isScanning {
+                                Text("Scan en cours…")
+                            } else if scanResults.isEmpty {
+                                Text("Aucun Mac trouvé")
+                            } else {
+                                ForEach(scanResults) { host in
+                                    Button {
+                                        onSelectHost(host.ip)
+                                        onTest()
+                                        model.reload()
+                                    } label: {
+                                        Text("\(host.ip == peerIP.wrappedValue ? "✓ " : "")\(host.user) · \(host.ip) · \(host.os)")
+                                    }
+                                }
+                            }
+                            Divider()
+                            Button("Relancer le scan") { onScan() }
+                                .disabled(isScanning)
+                        } label: {
+                            Label(isScanning ? "Scan…" : "Scanner",
+                                  systemImage: "antenna.radiowaves.left.and.right")
+                        } primaryAction: {
+                            onScan()
+                        }
+                        .frame(width: 96)
+                        .help("Chercher les autres Macs PartageLAN sur le réseau local (clic) ; menu = choisir un Mac détecté")
+                    }
                 }
             }
             HStack(spacing: 4) {
@@ -876,7 +1012,11 @@ struct ContentView: View {
                         }
                     },
                     peerIP: $engine.peerIP,
-                    onTest: { engine.ping() }
+                    onTest: { engine.ping() },
+                    scanResults: engine.scanResults,
+                    isScanning: engine.isScanning,
+                    onScan: { engine.scanNetwork() },
+                    onSelectHost: { engine.peerIP = $0 }
                 )
             }
             .layoutPriority(1)
@@ -975,5 +1115,38 @@ struct PartageLANApp: App {
             ContentView()
                 .environmentObject(engine)
         }
+
+        // Icône + menu rapide dans la barre de menus macOS (haut de l'écran).
+        MenuBarExtra("Partage LAN", systemImage: "arrow.left.arrow.right") {
+            MenuBarContent(engine: engine)
+        }
+    }
+}
+
+/// Contenu du menu de la barre de menus : statut du pair + actions rapides.
+struct MenuBarContent: View {
+    @ObservedObject var engine: PartageEngine
+
+    var body: some View {
+        Text("Ici : \(engine.localName) · \(engine.localIP)")
+        if let user = engine.remoteUser {
+            Text("Pair joignable : \(user) · \(engine.peerIP)")
+        } else {
+            Text("Pair : \(engine.peerIP) (non testé)")
+        }
+        Divider()
+        Button("Ouvrir la fenêtre") {
+            NSApp.activate(ignoringOtherApps: true)
+            for window in NSApp.windows where window.canBecomeMain {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        Button("Tester le pair") { engine.ping() }
+        Button(engine.isScanning ? "Scan en cours…" : "Scanner le réseau") {
+            engine.scanNetwork()
+        }
+        .disabled(engine.isScanning)
+        Divider()
+        Button("Quitter PartageLAN") { NSApplication.shared.terminate(nil) }
     }
 }

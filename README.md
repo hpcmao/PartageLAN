@@ -15,8 +15,16 @@ App macOS (SwiftUI) à ouvrir sur **les deux** machines (10.0.0.4 `vemao` et 10.
   Dossiers non gérés (zipper d'abord).
 - **Presse-papier partagé** (texte) : Les 2 sens / Envoi seul / Réception seule / Coupé
   (sondage 0,6 s, anti-écho).
+- **Scan réseau** : bouton **Scanner** dans l'en-tête du panneau distant. Sonde tout le
+  sous-réseau /24 local (ping sur 7365), liste les Macs PartageLAN détectés dans un menu
+  déroulant (compte · IP · système), un clic sélectionne l'IP. Sélection automatique si un
+  seul Mac répond.
+- **Icône barre de menus** (⬅➡ en haut de l'écran) : statut du pair + actions rapides
+  (ouvrir la fenêtre, tester, scanner, quitter).
 - **Dossier de réception** configurable : y arrivent les fichiers poussés spontanément
   par l'autre machine (par défaut ~/Downloads).
+- **Persistance** : chemins des deux panneaux, dossier de réception, IP du pair, thème et
+  géométrie de fenêtre conservés entre les sessions (écriture immédiate, robuste au crash).
 - **Thèmes** : Système, Clair, Sombre, Océan, Sépia. Fenêtre redimensionnable, tooltips
   partout, textes copiables (journal copiable d'un clic).
 
