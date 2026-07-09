@@ -1111,10 +1111,13 @@ struct PartageLANApp: App {
     @StateObject private var engine = PartageEngine()
 
     var body: some Scene {
-        WindowGroup("Partage LAN") {
+        // Fenêtre unique, NON ouverte au démarrage (app en arrière-plan / barre de menus).
+        // L'utilisateur l'ouvre à la demande depuis l'icône de la barre de menus.
+        Window("Partage LAN", id: "main") {
             ContentView()
                 .environmentObject(engine)
         }
+        .defaultLaunchBehavior(.suppressed)
 
         // Icône + menu rapide dans la barre de menus macOS (haut de l'écran).
         MenuBarExtra("Partage LAN", systemImage: "arrow.left.arrow.right") {
@@ -1126,6 +1129,7 @@ struct PartageLANApp: App {
 /// Contenu du menu de la barre de menus : statut du pair + actions rapides.
 struct MenuBarContent: View {
     @ObservedObject var engine: PartageEngine
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text("Ici : \(engine.localName) · \(engine.localIP)")
@@ -1137,9 +1141,7 @@ struct MenuBarContent: View {
         Divider()
         Button("Ouvrir la fenêtre") {
             NSApp.activate(ignoringOtherApps: true)
-            for window in NSApp.windows where window.canBecomeMain {
-                window.makeKeyAndOrderFront(nil)
-            }
+            openWindow(id: "main")
         }
         Button("Tester le pair") { engine.ping() }
         Button(engine.isScanning ? "Scan en cours…" : "Scanner le réseau") {
