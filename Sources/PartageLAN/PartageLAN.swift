@@ -655,7 +655,15 @@ final class PartageEngine: ObservableObject {
         // une app agent (LSUIElement), ce qui faisait échouer l'ouverture silencieusement.
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("partagelan_ssh_\(UUID().uuidString).command")
-        let body = "#!/bin/zsh\nclear\n\(command)\n"
+        // Bandeau d'en-tête (reste visible en haut de la fenêtre après connexion) pour
+        // rappeler qu'on est en SSH et vers quel hôte/dossier.
+        var lines = ["#!/bin/zsh", "clear",
+                     #"echo "══════════════════════════════════════════════""#,
+                     "echo \"  🔗 Connecté en SSH à \(host)\""]
+        if !dir.isEmpty { lines.append("echo \"  📁 Dossier : \(dir)\"") }
+        lines.append(#"echo "══════════════════════════════════════════════""#)
+        lines.append(command)
+        let body = lines.joined(separator: "\n") + "\n"
         do {
             try body.write(to: scriptURL, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755],
