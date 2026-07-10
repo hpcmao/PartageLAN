@@ -161,6 +161,10 @@ final class PartageEngine: ObservableObject {
     @Published var sshDir: String {
         didSet { UserDefaults.standard.set(sshDir, forKey: "sshDir") }
     }
+    /// Nom de session tmux partagée : un Terminal SSH ouvert vers cette machine et un
+    /// Terminal partagé ouvert en local dessus rejoignent la même session, visible/pilotable
+    /// des deux côtés. Nécessite tmux installé sur la machine ciblée (pas fourni par défaut).
+    private let sharedTmuxSession = "partagelan"
     @Published var status = "Démarrage…"
     @Published var journal: [String] = []
     @Published var remoteUser: String?
@@ -640,14 +644,47 @@ final class PartageEngine: ObservableObject {
         openSSHTerminal(host: host, dir: path)
     }
 
+    /// Ouvre le Finder connecté en partage de fichiers (SMB) sur la machine distante. Si
+    /// `path` est sous le dossier personnel du compte distant, on vise directement ce
+    /// sous-dossier (partage macOS par défaut = nom du compte) ; sinon on ouvre juste la
+    /// racine des partages et l'utilisateur navigue à la main. Nécessite que le Partage de
+    /// fichiers soit activé côté distant (Réglages Système → Général → Partage).
+    /// Utilisé par le clic droit sur le panneau distant.
+    func openRemoteFinder(path: String) {
+        let ip = peerIP.trimmingCharacters(in: .whitespaces)
+        guard !ip.isEmpty else { log("Finder : IP distante manquante"); return }
+        let userPrefix = remoteUser.map { "\($0)@" } ?? ""
+        var tail = ""
+        if let remoteUser {
+            let home = "/Users/\(remoteUser)"
+            if path == home || path.hasPrefix(home + "/") {
+                let relative = String(path.dropFirst(home.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                tail = "/\(remoteUser)" + (relative.isEmpty ? "" : "/\(relative)")
+            }
+        }
+        let encodedTail = tail.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+        guard let url = URL(string: "smb://\(userPrefix)\(ip)\(encodedTail)") else {
+            log("Finder : URL de partage invalide pour \(path)")
+            return
+        }
+        NSWorkspace.shared.open(url)
+        log("Finder ouvert sur \(ip)" + (tail.isEmpty
+            ? " (partage de fichiers requis sur la machine distante)" : " → \(path)"))
+    }
+
     /// Ouvre Terminal.app avec une session SSH vers `host`, positionnée dans `dir` si fourni.
     func openSSHTerminal(host: String, dir: String) {
         guard !host.isEmpty else { log("SSH : hôte manquant (renseigner user@hôte)"); return }
-        // Partie distante entre quotes simples : cd (guillemets doubles pour gérer les espaces)
-        // puis shell de connexion interactif pour rester dans le dossier.
+        // Partie distante entre quotes simples : on crée/rejoint une session tmux partagée
+        // (guillemets doubles pour le dossier, gère les espaces) au lieu d'un shell simple,
+        // pour qu'un Terminal partagé ouvert en local sur l'hôte cible (openSharedTerminal)
+        // voie et pilote la même session.
         var command = "ssh -t \(host)"
         if !dir.isEmpty {
-            command += " 'cd \"\(dir)\" && exec ${SHELL:-/bin/zsh} -l'"
+            command += " 'tmux new -A -s \(sharedTmuxSession) -c \"\(dir)\"'"
+        } else {
+            command += " 'tmux new -A -s \(sharedTmuxSession)'"
         }
         // On écrit un script .command et on l'ouvre avec `open -a Terminal` plutôt que de
         // piloter Terminal par Apple Events (NSAppleScript) : cela évite l'autorisation
@@ -659,14 +696,22 @@ final class PartageEngine: ObservableObject {
         // rappeler qu'on est en SSH et vers quel hôte/dossier.
         var lines = ["#!/bin/zsh", "clear",
                      #"echo "══════════════════════════════════════════════""#,
-                     "echo \"  🔗 Connecté en SSH à \(host)\""]
+                     "echo \"  🔗 Connecté en SSH à \(host)\"",
+                     "echo \"  👥 Session partagée (tmux : \(sharedTmuxSession))\""]
         if !dir.isEmpty { lines.append("echo \"  📁 Dossier : \(dir)\"") }
         lines.append(#"echo "══════════════════════════════════════════════""#)
         lines.append(command)
-        // Si ssh échoue (Session à distance non activée, mauvais compte/clé…), garder la
-        // fenêtre ouverte avec un message lisible au lieu de la refermer aussitôt.
+        // Si ssh échoue (Session à distance non activée, mauvais compte/clé…) ou si tmux
+        // n'est pas installé côté distant (code 127), garder la fenêtre ouverte avec un
+        // message lisible au lieu de la refermer aussitôt.
         lines.append("code=$?")
-        lines.append("if [ $code -ne 0 ]; then")
+        lines.append("if [ $code -eq 127 ]; then")
+        lines.append(#"  echo """#)
+        lines.append(#"  echo "⚠️  tmux introuvable sur la machine distante.""#)
+        lines.append(#"  echo "   • Installer avec : sudo port install tmux (ou brew install tmux)""#)
+        lines.append(#"  echo """#)
+        lines.append(#"  printf "Appuyez sur une touche pour fermer… "; read -k1 -s"#)
+        lines.append("elif [ $code -ne 0 ]; then")
         lines.append(#"  echo """#)
         lines.append(#"  echo "⚠️  Connexion SSH échouée (code $code).""#)
         lines.append(#"  echo "   • « Session à distance » (Remote Login) est-elle activée sur l'hôte ?""#)
@@ -694,6 +739,56 @@ final class PartageEngine: ObservableObject {
             log("Erreur ouverture Terminal SSH : \(error.localizedDescription)")
         }
         // Nettoyage différé : Terminal a déjà chargé le script, on peut le supprimer.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+            try? FileManager.default.removeItem(at: scriptURL)
+        }
+    }
+
+    /// Ouvre Terminal.app en local (pas de SSH) et rejoint/crée la session tmux partagée sur
+    /// CETTE machine. Permet de voir/piloter en direct un Terminal SSH ouvert vers ici depuis
+    /// l'autre Mac (ou simplement d'avoir deux fenêtres locales sur la même session).
+    func openSharedTerminal() {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Terminal partagé"
+        alert.informativeText = "Ouvre un Terminal connecté à la session partagée de cette "
+            + "machine. Si un « Terminal SSH » a été ouvert vers ici depuis l'autre Mac, vous "
+            + "verrez et pourrez piloter le même terminal en direct, dans les deux sens."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Annuler")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("partagelan_tmux_\(UUID().uuidString).command")
+        var lines = ["#!/bin/zsh", "clear",
+                     #"echo "══════════════════════════════════════════════""#,
+                     "echo \"  👥 Terminal partagé (tmux : \(sharedTmuxSession))\"",
+                     #"echo "══════════════════════════════════════════════""#,
+                     "tmux new -A -s \(sharedTmuxSession)"]
+        lines.append("code=$?")
+        lines.append("if [ $code -eq 127 ]; then")
+        lines.append(#"  echo """#)
+        lines.append(#"  echo "⚠️  tmux introuvable. Installer avec : sudo port install tmux (ou brew install tmux)""#)
+        lines.append(#"  echo """#)
+        lines.append(#"  printf "Appuyez sur une touche pour fermer… "; read -k1 -s"#)
+        lines.append("fi")
+        let body = lines.joined(separator: "\n") + "\n"
+        do {
+            try body.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                  ofItemAtPath: scriptURL.path)
+        } catch {
+            log("Erreur préparation Terminal partagé : \(error.localizedDescription)")
+            return
+        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        proc.arguments = ["-a", "Terminal", scriptURL.path]
+        do {
+            try proc.run()
+            log("Terminal partagé ouvert (tmux : \(sharedTmuxSession))")
+        } catch {
+            log("Erreur ouverture Terminal partagé : \(error.localizedDescription)")
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
             try? FileManager.default.removeItem(at: scriptURL)
         }
@@ -870,6 +965,8 @@ struct PaneView: View {
     var onDropURLs: (([URL]) -> Void)? = nil
     /// Panneau distant : clic droit sur une entrée → ouvrir un Terminal SSH à cet endroit.
     var onOpenSSH: ((Entry) -> Void)? = nil
+    /// Panneau distant : clic droit sur une entrée → ouvrir le Finder (partage réseau) à cet endroit.
+    var onOpenFinder: ((Entry) -> Void)? = nil
     /// Panneau distant : champ IP + bouton Tester dans l'en-tête.
     var peerIP: Binding<String>? = nil
     var onTest: (() -> Void)? = nil
@@ -1005,6 +1102,15 @@ struct PaneView: View {
                                   systemImage: "terminal")
                         }
                     }
+                    if let onOpenFinder {
+                        Button {
+                            onOpenFinder(e)
+                        } label: {
+                            Label(e.isDir ? "Ouvrir « \(e.name) » dans le Finder"
+                                          : "Ouvrir ce dossier dans le Finder",
+                                  systemImage: "folder")
+                        }
+                    }
                 }
                 .tag(e.name)
             }
@@ -1112,6 +1218,11 @@ struct ContentView: View {
                         let path = e.isDir ? engine.remotePane.fullPath(e.name) : engine.remotePane.path
                         engine.openRemoteSSH(path: path)
                     },
+                    onOpenFinder: { e in
+                        // Dossier : Finder dedans ; fichier : Finder dans le dossier courant.
+                        let path = e.isDir ? engine.remotePane.fullPath(e.name) : engine.remotePane.path
+                        engine.openRemoteFinder(path: path)
+                    },
                     peerIP: $engine.peerIP,
                     onTest: { engine.ping() },
                     scanResults: engine.scanResults,
@@ -1168,7 +1279,14 @@ struct ContentView: View {
                 }
                 .controlSize(.small)
                 .disabled(engine.sshHost.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("Ouvrir Terminal et se connecter en SSH à l'hôte (dans le dossier si indiqué)")
+                .help("Ouvrir Terminal et se connecter en SSH à l'hôte (dans le dossier si indiqué) — session tmux partagée")
+                Button {
+                    engine.openSharedTerminal()
+                } label: {
+                    Label("Terminal partagé", systemImage: "person.2")
+                }
+                .controlSize(.small)
+                .help("Rejoindre en local la session tmux partagée sur cette machine (même session qu'un Terminal SSH ouvert vers ici depuis l'autre Mac)")
                 Spacer()
             }
 
