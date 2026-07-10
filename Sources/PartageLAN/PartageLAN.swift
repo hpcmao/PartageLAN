@@ -680,12 +680,27 @@ final class PartageEngine: ObservableObject {
         // (guillemets doubles pour le dossier, gère les espaces) au lieu d'un shell simple,
         // pour qu'un Terminal partagé ouvert en local sur l'hôte cible (openSharedTerminal)
         // voie et pilote la même session.
-        var command = "ssh -t \(host)"
+        // `ssh host 'commande'` exécute un shell NON connecté (pas de login shell), qui ne lit
+        // donc pas ~/.zprofile : le PATH n'inclut pas les emplacements où MacPorts/Homebrew
+        // installent tmux. On le rajoute explicitement pour ne pas dépendre du profil distant.
+        let remotePath = "export PATH=\"/opt/local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; "
+        // `tmux new -A` ignore -c (dossier de départ) si la session existe déjà — elle garde
+        // le dossier courant de son pane, pas celui demandé. On décompose donc en étapes
+        // (has-session/new-session -d, puis send-keys cd, puis attach) avec de simples `;` du
+        // shell plutôt que le chaînage `\;` propre à tmux, pour que le dossier cliqué soit
+        // TOUJOURS respecté, même sur une session déjà active — pas seulement à sa création.
+        // Si la session vient d'être créée, le shell du nouveau pane met un instant à être
+        // prêt : envoyer send-keys immédiatement après peut faire perdre la frappe (course
+        // constatée en test). D'où le `sleep 1`, uniquement sur la branche création — une
+        // ré-attache à une session déjà active reste instantanée.
+        var remoteCmd = remotePath
+        remoteCmd += "tmux has-session -t \(sharedTmuxSession) 2>/dev/null || "
+        remoteCmd += "{ tmux new-session -d -s \(sharedTmuxSession); sleep 1; }; "
         if !dir.isEmpty {
-            command += " 'tmux new -A -s \(sharedTmuxSession) -c \"\(dir)\"'"
-        } else {
-            command += " 'tmux new -A -s \(sharedTmuxSession)'"
+            remoteCmd += "tmux send-keys -t \(sharedTmuxSession) \"cd \\\"\(dir)\\\"\" Enter; "
         }
+        remoteCmd += "tmux attach -t \(sharedTmuxSession)"
+        let command = "ssh -t \(host) '\(remoteCmd)'"
         // On écrit un script .command et on l'ouvre avec `open -a Terminal` plutôt que de
         // piloter Terminal par Apple Events (NSAppleScript) : cela évite l'autorisation
         // « Automatisation » que macOS exige sinon — prompt souvent absent/bloquant pour
