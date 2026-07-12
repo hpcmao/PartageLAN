@@ -8,7 +8,8 @@ App macOS (SwiftUI) à ouvrir sur **les deux** machines (10.0.0.4 `vemao` et 10.
 - **Deux panneaux** : « Machine locale » et « Machine distante », chacun avec son compte,
   son IP et son système affichés. Navigation complète des deux côtés : double-clic pour
   entrer dans un dossier, ⬆ dossier parent, chemin éditable (Entrée pour y aller), ⟳ rafraîchir.
-- **Copie de fichiers dans les deux sens** : sélection (⌘-clic pour multiple) puis
+- **Copie de fichiers dans les deux sens** : sélection (clic, ⌘/⇧ + clic, ou glisser la souris
+  façon Finder pour sélectionner plusieurs éléments) puis
   bouton **→** (local → dossier distant affiché) ou **←** (distant → dossier local affiché).
   Double-clic sur un fichier distant = le récupérer. Glisser-déposer des fichiers du Finder
   sur le panneau distant = les envoyer dans le dossier distant affiché. Noms dédoublonnés.
@@ -28,8 +29,8 @@ App macOS (SwiftUI) à ouvrir sur **les deux** machines (10.0.0.4 `vemao` et 10.
   par l'autre machine (par défaut ~/Downloads).
 - **Persistance** : chemins des deux panneaux, dossier de réception, IP du pair, thème et
   géométrie de fenêtre conservés entre les sessions (écriture immédiate, robuste au crash).
-- **Thèmes** : Système, Clair, Sombre, Océan, Sépia. Fenêtre redimensionnable, tooltips
-  partout, textes copiables (journal copiable d'un clic).
+- **Thèmes** : Système, Clair, Sombre, Océan, Sépia, Nord, Dracula, Solarisé clair, Contraste
+  élevé. Fenêtre redimensionnable, tooltips partout, textes copiables (journal copiable d'un clic).
 
 ## Fonctionnement
 

@@ -35,7 +35,7 @@ struct ScanHost: Identifiable, Equatable {
 }
 
 enum Theme: String, CaseIterable, Identifiable {
-    case system, clair, sombre, ocean, sepia
+    case system, clair, sombre, ocean, sepia, nord, dracula, solariseClair, contraste
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -44,19 +44,29 @@ enum Theme: String, CaseIterable, Identifiable {
         case .sombre: return "Sombre"
         case .ocean: return "Océan"
         case .sepia: return "Sépia"
+        case .nord: return "Nord"
+        case .dracula: return "Dracula"
+        case .solariseClair: return "Solarisé clair"
+        case .contraste: return "Contraste élevé"
         }
     }
     var colorScheme: ColorScheme? {
         switch self {
         case .system: return nil
-        case .clair, .sepia: return .light
-        case .sombre, .ocean: return .dark
+        case .clair, .sepia, .solariseClair: return .light
+        case .sombre, .ocean, .nord, .dracula, .contraste: return .dark
         }
     }
+    /// Couleur d'accent : pour .contraste, orange/ambre choisi pour rester distinguable quel que
+    /// soit le type de daltonisme (contrairement à un contraste rouge/vert), sur fond quasi noir.
     var accent: Color? {
         switch self {
         case .ocean: return .cyan
         case .sepia: return Color(red: 0.55, green: 0.35, blue: 0.15)
+        case .nord: return Color(red: 0.53, green: 0.75, blue: 0.82)
+        case .dracula: return Color(red: 0.55, green: 0.91, blue: 0.99)
+        case .solariseClair: return Color(red: 0.15, green: 0.55, blue: 0.82)
+        case .contraste: return Color(red: 1.0, green: 0.62, blue: 0.04)
         default: return nil
         }
     }
@@ -64,6 +74,10 @@ enum Theme: String, CaseIterable, Identifiable {
         switch self {
         case .ocean: return Color(red: 0.07, green: 0.12, blue: 0.18)
         case .sepia: return Color(red: 0.96, green: 0.93, blue: 0.86)
+        case .nord: return Color(red: 0.18, green: 0.20, blue: 0.25)
+        case .dracula: return Color(red: 0.157, green: 0.165, blue: 0.212)
+        case .solariseClair: return Color(red: 0.992, green: 0.965, blue: 0.890)
+        case .contraste: return Color(red: 0.05, green: 0.05, blue: 0.06)
         default: return nil
         }
     }
@@ -970,6 +984,16 @@ final class PartageEngine: ObservableObject {
 
 // MARK: - Vue d'un panneau
 
+/// Collecte le rectangle (dans l'espace de coordonnées nommé "paneList") de chaque ligne
+/// affichée, par nom d'entrée — sert à déterminer quelles lignes touche un rectangle de
+/// sélection glissé à la souris.
+private struct RowFrameKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 struct PaneView: View {
     let title: String
     let subtitle: String
@@ -992,6 +1016,15 @@ struct PaneView: View {
     var onSelectHost: ((String) -> Void)? = nil
 
     @State private var dropTargeted = false
+    /// État de la sélection par glisser (rectangle façon Finder) — remplace la sélection native
+    /// de `List` (clic/⌘-clic/⇧-clic), qui ne supporte pas nativement le glisser sur macOS.
+    @State private var rowFrames: [String: CGRect] = [:]
+    @State private var dragOrigin: CGPoint? = nil
+    @State private var dragBaseSelection: Set<String> = []
+    @State private var marqueeRect: CGRect? = nil
+    @State private var anchorName: String? = nil
+    @State private var lastClickTime = Date.distantPast
+    @State private var lastClickedName: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1083,80 +1116,181 @@ struct PaneView: View {
     private var list: some View {
         let base = List(selection: $model.selection) {
             ForEach(model.entries) { e in
-                HStack {
-                    Image(systemName: e.isDir ? "folder.fill" : "doc")
-                        .foregroundStyle(e.isDir ? Color.accentColor : Color.secondary)
-                    Text(e.name)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    if let s = e.size {
-                        Text(PartageEngine.human(s))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    if e.isDir {
-                        model.enter(e.name)
-                    } else {
-                        onFileDoubleClick?(e)
-                    }
-                }
-                .help(e.isDir ? "Double-clic : ouvrir le dossier « \(e.name) »"
-                              : "Clic : sélectionner (⌘-clic : sélection multiple)"
-                                + (onFileDoubleClick != nil ? " — double-clic : récupérer le fichier" : ""))
-                .contextMenu {
-                    if let onOpenSSH {
-                        Button {
-                            onOpenSSH(e)
-                        } label: {
-                            Label(e.isDir ? "Ouvrir « \(e.name) » dans Terminal (SSH)"
-                                          : "Ouvrir ce dossier dans Terminal (SSH)",
-                                  systemImage: "terminal")
-                        }
-                    }
-                    if let onOpenFinder {
-                        Button {
-                            onOpenFinder(e)
-                        } label: {
-                            Label(e.isDir ? "Ouvrir « \(e.name) » dans le Finder"
-                                          : "Ouvrir ce dossier dans le Finder",
-                                  systemImage: "folder")
-                        }
-                    }
-                }
-                .tag(e.name)
+                row(for: e)
             }
         }
         .listStyle(.bordered)
         .frame(minHeight: 200, maxHeight: .infinity)
 
-        if let onDropURLs {
-            base
-                .overlay {
-                    if dropTargeted {
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.accentColor, lineWidth: 2)
-                    }
-                }
-                .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-                    for p in providers {
-                        p.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                            var url: URL?
-                            if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
-                            else if let u = item as? URL { url = u }
-                            if let url {
-                                DispatchQueue.main.async { onDropURLs([url]) }
-                            }
+        ZStack(alignment: .topLeading) {
+            if let onDropURLs {
+                base
+                    .overlay {
+                        if dropTargeted {
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color.accentColor, lineWidth: 2)
                         }
                     }
-                    return true
-                }
-        } else {
-            base
+                    .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+                        for p in providers {
+                            p.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                                var url: URL?
+                                if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
+                                else if let u = item as? URL { url = u }
+                                if let url {
+                                    DispatchQueue.main.async { onDropURLs([url]) }
+                                }
+                            }
+                        }
+                        return true
+                    }
+            } else {
+                base
+            }
+
+            // Rectangle de sélection visible pendant un glisser (retour visuel façon Finder) ;
+            // la sélection elle-même est déjà appliquée en direct par rowGesture(for:).
+            if let r = marqueeRect {
+                Rectangle()
+                    .fill(Color.accentColor.opacity(0.15))
+                    .overlay(Rectangle().stroke(Color.accentColor.opacity(0.6), lineWidth: 1))
+                    .frame(width: r.width, height: r.height)
+                    .position(x: r.midX, y: r.midY)
+                    .allowsHitTesting(false)
+            }
         }
+        .coordinateSpace(.named("paneList"))
+        .onPreferenceChange(RowFrameKey.self) { rowFrames = $0 }
+    }
+
+    /// Boutons SSH/Finder communs au clic droit (contextMenu) et au menu déroulant dédié.
+    @ViewBuilder
+    private func sshFinderActions(for e: Entry) -> some View {
+        if let onOpenSSH {
+            Button {
+                onOpenSSH(e)
+            } label: {
+                Label(e.isDir ? "Ouvrir « \(e.name) » dans Terminal (SSH)"
+                              : "Ouvrir ce dossier dans Terminal (SSH)",
+                      systemImage: "terminal")
+            }
+        }
+        if let onOpenFinder {
+            Button {
+                onOpenFinder(e)
+            } label: {
+                Label(e.isDir ? "Ouvrir « \(e.name) » dans le Finder"
+                              : "Ouvrir ce dossier dans le Finder",
+                      systemImage: "folder")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(for e: Entry) -> some View {
+        HStack(spacing: 6) {
+            HStack {
+                Image(systemName: e.isDir ? "folder.fill" : "doc")
+                    .foregroundStyle(e.isDir ? Color.accentColor : Color.secondary)
+                Text(e.name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                if let s = e.size {
+                    Text(PartageEngine.human(s))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: RowFrameKey.self,
+                                            value: [e.name: geo.frame(in: .named("paneList"))])
+                }
+            )
+            .gesture(rowGesture(for: e))
+            .help(e.isDir ? "Double-clic : ouvrir le dossier « \(e.name) » — glisser : sélection multiple"
+                          : "Clic : sélectionner (⌘/⇧ + clic, ou glisser : sélection multiple)"
+                            + (onFileDoubleClick != nil ? " — double-clic : récupérer le fichier" : ""))
+            .contextMenu { sshFinderActions(for: e) }
+
+            if onOpenSSH != nil || onOpenFinder != nil {
+                Menu {
+                    sshFinderActions(for: e)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("SSH ou Finder sur cet élément")
+            }
+        }
+        .tag(e.name)
+    }
+
+    /// Geste unique par ligne qui remplace la sélection native de `List` : gère clic simple
+    /// (remplace), ⌘-clic (bascule), ⇧-clic (plage depuis la dernière ancre), double-clic
+    /// (détecté par horodatage plutôt que via un second `TapGesture` concurrent — évite tout
+    /// conflit de priorité entre gestes SwiftUI) et glisser (rectangle façon Finder, ⌘-glisser
+    /// = additif au lieu de remplacer).
+    private func rowGesture(for e: Entry) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("paneList"))
+            .onChanged { value in
+                if dragOrigin == nil {
+                    dragOrigin = value.startLocation
+                    dragBaseSelection = NSEvent.modifierFlags.contains(.command) ? model.selection : []
+                }
+                guard let origin = dragOrigin else { return }
+                let rect = CGRect(x: min(origin.x, value.location.x),
+                                   y: min(origin.y, value.location.y),
+                                   width: abs(value.location.x - origin.x),
+                                   height: abs(value.location.y - origin.y))
+                marqueeRect = (rect.width > 3 || rect.height > 3) ? rect : nil
+                let hit = rowFrames.filter { $0.value.intersects(rect) }.map(\.key)
+                model.selection = dragBaseSelection.union(hit)
+            }
+            .onEnded { value in
+                defer { dragOrigin = nil; dragBaseSelection = []; marqueeRect = nil }
+                let moved = hypot(value.translation.width, value.translation.height) > 3
+                if moved {
+                    // Fin d'un vrai glisser : la sélection est déjà à jour ; on retient juste
+                    // la ligne sous le relâchement comme ancre pour un futur ⇧-clic.
+                    if let name = rowFrames.first(where: { $0.value.contains(value.location) })?.key {
+                        anchorName = name
+                    }
+                    return
+                }
+                // Pas de mouvement réel : c'est un clic, à traiter avec ses modificateurs.
+                let now = Date()
+                let isDoubleClick = lastClickedName == e.name && now.timeIntervalSince(lastClickTime) < 0.5
+                lastClickTime = now
+                lastClickedName = e.name
+                if isDoubleClick {
+                    if e.isDir {
+                        model.enter(e.name)
+                    } else {
+                        onFileDoubleClick?(e)
+                    }
+                    return
+                }
+                if NSEvent.modifierFlags.contains(.shift), let anchor = anchorName,
+                   let a = model.entries.firstIndex(where: { $0.name == anchor }),
+                   let b = model.entries.firstIndex(where: { $0.name == e.name }) {
+                    let range = a <= b ? a...b : b...a
+                    model.selection = Set(model.entries[range].map(\.name))
+                } else if NSEvent.modifierFlags.contains(.command) {
+                    if model.selection.contains(e.name) {
+                        model.selection.remove(e.name)
+                    } else {
+                        model.selection.insert(e.name)
+                    }
+                    anchorName = e.name
+                } else {
+                    model.selection = [e.name]
+                    anchorName = e.name
+                }
+            }
     }
 }
 
@@ -1185,7 +1319,7 @@ struct ContentView: View {
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
-                .help("Apparence de la fenêtre : Système, Clair, Sombre, Océan ou Sépia")
+                .help("Apparence de la fenêtre : Système, Clair, Sombre, Océan, Sépia, Nord, Dracula, Solarisé clair ou Contraste élevé")
             }
 
             HStack(alignment: .top, spacing: 8) {
