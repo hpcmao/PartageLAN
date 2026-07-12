@@ -179,6 +179,17 @@ final class PartageEngine: ObservableObject {
     /// Terminal partagé ouvert en local dessus rejoignent la même session, visible/pilotable
     /// des deux côtés. Nécessite tmux installé sur la machine ciblée (pas fourni par défaut).
     private let sharedTmuxSession = "partagelan"
+    /// Fragment shell idempotent garantissant un scrollback confortable dans tmux : Claude
+    /// Code (et tout autre programme plein écran) écrit en alternate screen, invisible pour le
+    /// scrollback natif de Terminal.app — seul celui de tmux compte, et il est trop court/sans
+    /// souris par défaut (2000 lignes, mouse off). On complète ~/.tmux.conf pour les prochains
+    /// démarrages de serveur ET on applique en direct (`tmux set -g`) pour la session déjà
+    /// active, sans écraser le reste d'un .tmux.conf existant.
+    private var tmuxComfortCmd: String {
+        "grep -q '^set -g history-limit' ~/.tmux.conf 2>/dev/null || echo 'set -g history-limit 50000' >> ~/.tmux.conf; "
+        + "grep -q '^set -g mouse on' ~/.tmux.conf 2>/dev/null || echo 'set -g mouse on' >> ~/.tmux.conf; "
+        + "tmux set -g history-limit 50000; tmux set -g mouse on; "
+    }
     @Published var status = "Démarrage…"
     @Published var journal: [String] = []
     @Published var remoteUser: String?
@@ -710,6 +721,7 @@ final class PartageEngine: ObservableObject {
         var remoteCmd = remotePath
         remoteCmd += "tmux has-session -t \(sharedTmuxSession) 2>/dev/null || "
         remoteCmd += "{ tmux new-session -d -s \(sharedTmuxSession); sleep 1; }; "
+        remoteCmd += tmuxComfortCmd
         if !dir.isEmpty {
             remoteCmd += "tmux send-keys -t \(sharedTmuxSession) \"cd \\\"\(dir)\\\"\" Enter; "
         }
@@ -792,7 +804,8 @@ final class PartageEngine: ObservableObject {
                      #"echo "══════════════════════════════════════════════""#,
                      "echo \"  👥 Terminal partagé (tmux : \(sharedTmuxSession))\"",
                      #"echo "══════════════════════════════════════════════""#,
-                     "tmux new -A -s \(sharedTmuxSession)"]
+                     "tmux has-session -t \(sharedTmuxSession) 2>/dev/null || tmux new-session -d -s \(sharedTmuxSession)",
+                     tmuxComfortCmd + "tmux attach -t \(sharedTmuxSession)"]
         lines.append("code=$?")
         lines.append("if [ $code -eq 127 ]; then")
         lines.append(#"  echo """#)
