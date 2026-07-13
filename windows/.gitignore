@@ -1,0 +1,7 @@
+# Artefacts Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Fichiers temporaires locaux (hors dépôt de toute façon)
+*.log
