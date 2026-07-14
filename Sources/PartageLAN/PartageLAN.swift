@@ -180,25 +180,32 @@ final class PartageEngine: ObservableObject {
     /// des deux côtés. Nécessite tmux installé sur la machine ciblée (pas fourni par défaut).
     private let sharedTmuxSession = "partagelan"
     /// Fragment shell idempotent réglant tmux pour le partage. Claude Code (et tout programme
-    /// plein écran) écrit en alternate screen : invisible pour le scrollback natif de Terminal.app,
+    /// plein écran) écrit en alternate screen : invisible pour le scrollback natif du terminal,
     /// seul celui de tmux compte — trop court par défaut (2000 lignes). On monte donc
-    /// `history-limit` à 50000. En revanche `mouse` reste VOLONTAIREMENT OFF : `mouse on` fait
-    /// capturer la souris par tmux, qui copie la sélection dans son buffer interne au lieu du
-    /// presse-papier macOS → le copier natif du terminal est cassé (les bypass ⌥/⇧ ne marchent
-    /// pas dans tous les terminaux). On retire donc toute ligne `set -g mouse on` héritée d'une
-    /// version précédente et on force `mouse off` à chaud, pour auto-réparer les machines déjà
-    /// configurées. Remontée dans l'historique : Ctrl-b [ (puis PgUp/flèches, q pour sortir).
+    /// `history-limit` à 50000. On active aussi `mouse on` (la molette défile l'historique) et
+    /// `set-clipboard on` (les copies remontent au presse-papier macOS via OSC 52).
+    ///
+    /// Ce réglage suppose le terminal **iTerm2** côté client (l'app ouvre les sessions dans
+    /// iTerm2, cf. `open -b com.googlecode.iterm2`). Avec `mouse on`, tmux capture la souris ;
+    /// pour copier on maintient ⌥ Option PENDANT la sélection (sélection native qui contourne
+    /// tmux) puis ⌘C — bypass qui, contrairement à Terminal.app, fonctionne dans iTerm2. À
+    /// activer une fois par Mac : iTerm2 → Preferences → General → Selection →
+    /// « Applications in terminal may access clipboard » (autorise OSC 52). On auto-répare les
+    /// machines restées en `mouse off` (fix précédent) : toute ligne `set -g mouse off` héritée
+    /// est retirée du `~/.tmux.conf`, et `mouse on` / `set-clipboard on` ajoutés si absents.
     ///
     /// Contrainte de quoting : en SSH la partie distante passe dans `ssh host '…'` ; le shell
     /// local mange les quotes simples et OpenSSH recolle les arguments par espaces. Un motif
-    /// multi-mots (`^set -g mouse on`) ferait alors interpréter `-g` comme option de grep. On
+    /// multi-mots (`^set -g mouse off`) ferait alors interpréter `-g` comme option de grep. On
     /// n'utilise donc que des motifs MONO-MOT robustes aux deux contextes (SSH + `.command`
-    /// local) : `history-limit` et `mouse.on` (le `.` d'ERE remplace l'espace). Les commandes
-    /// `tmux set -g …`, sans quote, passent intactes de toute façon.
+    /// local) : `history-limit`, `mouse.off`, `mouse.on`, `set-clipboard` (le `.` d'ERE remplace
+    /// l'espace). Les commandes `tmux set -g …`, sans quote, passent intactes de toute façon.
     private var tmuxComfortCmd: String {
         "grep -q history-limit ~/.tmux.conf 2>/dev/null || echo 'set -g history-limit 50000' >> ~/.tmux.conf; "
-        + "grep -Eq 'mouse.on' ~/.tmux.conf 2>/dev/null && grep -Ev 'mouse.on' ~/.tmux.conf > ~/.tmux.conf.pl.tmp 2>/dev/null && mv ~/.tmux.conf.pl.tmp ~/.tmux.conf; "
-        + "tmux set -g history-limit 50000; tmux set -g mouse off; "
+        + "grep -Eq 'mouse.off' ~/.tmux.conf 2>/dev/null && grep -Ev 'mouse.off' ~/.tmux.conf > ~/.tmux.conf.pl.tmp 2>/dev/null && mv ~/.tmux.conf.pl.tmp ~/.tmux.conf; "
+        + "grep -Eq 'mouse.on' ~/.tmux.conf 2>/dev/null || echo 'set -g mouse on' >> ~/.tmux.conf; "
+        + "grep -q set-clipboard ~/.tmux.conf 2>/dev/null || echo 'set -g set-clipboard on' >> ~/.tmux.conf; "
+        + "tmux set -g history-limit 50000; tmux set -g mouse on; tmux set -g set-clipboard on; "
     }
     @Published var status = "Démarrage…"
     @Published var journal: [String] = []
@@ -737,10 +744,12 @@ final class PartageEngine: ObservableObject {
         }
         remoteCmd += "tmux attach -t \(sharedTmuxSession)"
         let command = "ssh -t \(host) '\(remoteCmd)'"
-        // On écrit un script .command et on l'ouvre avec `open -a Terminal` plutôt que de
-        // piloter Terminal par Apple Events (NSAppleScript) : cela évite l'autorisation
-        // « Automatisation » que macOS exige sinon — prompt souvent absent/bloquant pour
-        // une app agent (LSUIElement), ce qui faisait échouer l'ouverture silencieusement.
+        // On écrit un script .command et on l'ouvre avec `open -b com.googlecode.iterm2`
+        // (iTerm2, résolu par bundle id — robuste quel que soit le chemin d'install MacPorts)
+        // plutôt que de piloter le terminal par Apple Events (NSAppleScript) : cela évite
+        // l'autorisation « Automatisation » que macOS exige sinon — prompt souvent absent/bloquant
+        // pour une app agent (LSUIElement), ce qui faisait échouer l'ouverture silencieusement.
+        // iTerm2 exécute directement un .command dans une nouvelle fenêtre, comme Terminal.app.
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("partagelan_ssh_\(UUID().uuidString).command")
         // Bandeau d'en-tête (reste visible en haut de la fenêtre après connexion) pour
@@ -782,7 +791,7 @@ final class PartageEngine: ObservableObject {
         }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        proc.arguments = ["-a", "Terminal", scriptURL.path]
+        proc.arguments = ["-b", "com.googlecode.iterm2", scriptURL.path]
         do {
             try proc.run()
             log("Terminal SSH ouvert : \(host)\(dir.isEmpty ? "" : " → \(dir)")")
@@ -834,7 +843,7 @@ final class PartageEngine: ObservableObject {
         }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        proc.arguments = ["-a", "Terminal", scriptURL.path]
+        proc.arguments = ["-b", "com.googlecode.iterm2", scriptURL.path]
         do {
             try proc.run()
             log("Terminal partagé ouvert (tmux : \(sharedTmuxSession))")
