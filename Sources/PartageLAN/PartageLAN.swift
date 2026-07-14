@@ -179,16 +179,26 @@ final class PartageEngine: ObservableObject {
     /// Terminal partagé ouvert en local dessus rejoignent la même session, visible/pilotable
     /// des deux côtés. Nécessite tmux installé sur la machine ciblée (pas fourni par défaut).
     private let sharedTmuxSession = "partagelan"
-    /// Fragment shell idempotent garantissant un scrollback confortable dans tmux : Claude
-    /// Code (et tout autre programme plein écran) écrit en alternate screen, invisible pour le
-    /// scrollback natif de Terminal.app — seul celui de tmux compte, et il est trop court/sans
-    /// souris par défaut (2000 lignes, mouse off). On complète ~/.tmux.conf pour les prochains
-    /// démarrages de serveur ET on applique en direct (`tmux set -g`) pour la session déjà
-    /// active, sans écraser le reste d'un .tmux.conf existant.
+    /// Fragment shell idempotent réglant tmux pour le partage. Claude Code (et tout programme
+    /// plein écran) écrit en alternate screen : invisible pour le scrollback natif de Terminal.app,
+    /// seul celui de tmux compte — trop court par défaut (2000 lignes). On monte donc
+    /// `history-limit` à 50000. En revanche `mouse` reste VOLONTAIREMENT OFF : `mouse on` fait
+    /// capturer la souris par tmux, qui copie la sélection dans son buffer interne au lieu du
+    /// presse-papier macOS → le copier natif du terminal est cassé (les bypass ⌥/⇧ ne marchent
+    /// pas dans tous les terminaux). On retire donc toute ligne `set -g mouse on` héritée d'une
+    /// version précédente et on force `mouse off` à chaud, pour auto-réparer les machines déjà
+    /// configurées. Remontée dans l'historique : Ctrl-b [ (puis PgUp/flèches, q pour sortir).
+    ///
+    /// Contrainte de quoting : en SSH la partie distante passe dans `ssh host '…'` ; le shell
+    /// local mange les quotes simples et OpenSSH recolle les arguments par espaces. Un motif
+    /// multi-mots (`^set -g mouse on`) ferait alors interpréter `-g` comme option de grep. On
+    /// n'utilise donc que des motifs MONO-MOT robustes aux deux contextes (SSH + `.command`
+    /// local) : `history-limit` et `mouse.on` (le `.` d'ERE remplace l'espace). Les commandes
+    /// `tmux set -g …`, sans quote, passent intactes de toute façon.
     private var tmuxComfortCmd: String {
-        "grep -q '^set -g history-limit' ~/.tmux.conf 2>/dev/null || echo 'set -g history-limit 50000' >> ~/.tmux.conf; "
-        + "grep -q '^set -g mouse on' ~/.tmux.conf 2>/dev/null || echo 'set -g mouse on' >> ~/.tmux.conf; "
-        + "tmux set -g history-limit 50000; tmux set -g mouse on; "
+        "grep -q history-limit ~/.tmux.conf 2>/dev/null || echo 'set -g history-limit 50000' >> ~/.tmux.conf; "
+        + "grep -Eq 'mouse.on' ~/.tmux.conf 2>/dev/null && grep -Ev 'mouse.on' ~/.tmux.conf > ~/.tmux.conf.pl.tmp 2>/dev/null && mv ~/.tmux.conf.pl.tmp ~/.tmux.conf; "
+        + "tmux set -g history-limit 50000; tmux set -g mouse off; "
     }
     @Published var status = "Démarrage…"
     @Published var journal: [String] = []
