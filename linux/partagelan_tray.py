@@ -232,6 +232,28 @@ def open_uri_in_file_manager(uri):
             return
     xdg_open(uri)   # dernier recours
 
+# Session tmux partagée : mêmes réglages que l'app Mac (openSSHTerminal /
+# openSharedTerminal) pour que tous les terminaux rejoignent LA même session.
+SHARED_TMUX = "partagelan"
+TMUX_PATH = "export PATH=/opt/local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH; "
+TMUX_COMFORT = (
+    "grep -q history-limit ~/.tmux.conf 2>/dev/null || echo 'set -g history-limit 50000' >> ~/.tmux.conf; "
+    "grep -Eq 'mouse.off' ~/.tmux.conf 2>/dev/null && grep -Ev 'mouse.off' ~/.tmux.conf > ~/.tmux.conf.pl.tmp 2>/dev/null && mv ~/.tmux.conf.pl.tmp ~/.tmux.conf; "
+    "grep -Eq 'mouse.on' ~/.tmux.conf 2>/dev/null || echo 'set -g mouse on' >> ~/.tmux.conf; "
+    "grep -q set-clipboard ~/.tmux.conf 2>/dev/null || echo 'set -g set-clipboard on' >> ~/.tmux.conf; "
+    "tmux set -g history-limit 50000; tmux set -g mouse on; tmux set -g set-clipboard on; ")
+
+def tmux_join_cmd(dirpath=None):
+    """Rejoint/crée la session partagée en respectant `dirpath` même si la session
+    existe déjà (même découpage que l'app Mac : `new -A` ignorerait le dossier)."""
+    cmd = (f"tmux has-session -t {SHARED_TMUX} 2>/dev/null || "
+           f"{{ tmux new-session -d -s {SHARED_TMUX}; sleep 1; }}; ")
+    cmd += TMUX_COMFORT
+    if dirpath:
+        cmd += f'tmux send-keys -t {SHARED_TMUX} "cd \\"{dirpath}\\"" Enter; '
+    cmd += f"tmux attach -t {SHARED_TMUX}"
+    return cmd
+
 def firewall_allow_port():
     """Ouvre le port 7365 dans ufw via pkexec (boîte de dialogue d'authentification).
     Renvoie un message pour le journal."""
@@ -1147,18 +1169,18 @@ class App:
         self.cfg["ssh_host"] = host
         save_config(self.cfg)
         # Même nom de session que l'app Mac ("partagelan") => terminal réellement partagé.
-        # PATH ajouté pour trouver tmux (Homebrew/MacPorts) dans un shell SSH non-interactif.
-        remote = ("export PATH=/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:$PATH; "
-                  "command -v tmux >/dev/null 2>&1 || { echo tmux introuvable sur le Mac; exec $SHELL -l; }; "
-                  "tmux new-session -A -s partagelan")
+        # PATH ajouté pour trouver tmux (MacPorts/Homebrew) dans un shell SSH non-interactif.
+        remote = (TMUX_PATH
+                  + "command -v tmux >/dev/null 2>&1 || { echo tmux introuvable sur le Mac; exec $SHELL -l; }; "
+                  + tmux_join_cmd(None))
         self._launch_terminal(host, remote, "_term_partage.sh", "PartageLAN - Terminal partagé")
 
     def _open_local_shared_terminal(self):
         """Rejoint (ou crée) la session tmux locale « partagelan » de haikubuntu.
         À utiliser quand l'AUTRE machine lance son Terminal partagé vers ici :
         les deux terminaux montrent alors le même écran."""
-        body = "\n".join(['echo "Session partagée locale (tmux -s partagelan) ..."',
-                          "tmux new-session -A -s partagelan"])
+        body = "\n".join([f'echo "Session partagée locale (tmux : {SHARED_TMUX}) ..."',
+                          tmux_join_cmd(None)])
         self._launch_terminal_script(body, "_term_partage_ici.sh",
                                      "PartageLAN - Partagé ici")
 
@@ -1431,7 +1453,12 @@ class App:
         self.cfg["ssh_host"] = host
         self.cfg["ssh_dir"] = rdir
         save_config(self.cfg)
-        remote = f"cd '{rdir}'; exec $SHELL -l" if rdir else ""
+        # Comme l'app Mac : le Terminal SSH rejoint la session tmux partagée du pair
+        # (le « Terminal partagé » ouvert là-bas voit donc le même écran) ; repli
+        # shell simple si tmux manque côté distant (ex. winjeux).
+        fallback = (f'cd "{rdir}"; ' if rdir else "") + "exec $SHELL -l"
+        remote = (TMUX_PATH + "if command -v tmux >/dev/null 2>&1; then "
+                  + tmux_join_cmd(rdir) + "; else " + fallback + "; fi")
         self._launch_terminal(host, remote, "_term_ssh.sh", "PartageLAN - Terminal SSH")
 
     def _on_clip_mode(self, label):

@@ -819,7 +819,11 @@ final class PartageEngine: ObservableObject {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("partagelan_tmux_\(UUID().uuidString).command")
+        // iTerm2 exécute ce .command dans un shell NON connecté (pas de login) : sans
+        // export explicite, le tmux de MacPorts/Homebrew est hors PATH → erreur 127
+        // (« tmux introuvable ») alors que la session partagée existe bel et bien.
         var lines = ["#!/bin/zsh", "clear",
+                     "export PATH=\"/opt/local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"",
                      #"echo "══════════════════════════════════════════════""#,
                      "echo \"  👥 Terminal partagé (tmux : \(sharedTmuxSession))\"",
                      #"echo "══════════════════════════════════════════════""#,
