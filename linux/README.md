@@ -55,9 +55,16 @@ Réplique de l'app Mac (mêmes fonctions que le client Windows) :
 - Boutons **→** / **←** au centre : copier la sélection vers le dossier affiché en face
   (noms dédoublonnés ; dossiers non gérés — zipper d'abord).
 - **Bas** : statut « Ici : haikubuntu… à l'écoute », ligne **SSH** (Terminal SSH /
-  Terminal partagé `tmux -s partagelan`), **journal horodaté** copiable. Les fichiers
+  Terminal partagé / Partagé ici), **journal horodaté** copiable. Les fichiers
   reçus arrivent dans **le dossier affiché à gauche** (bouton **Ouvrir**) et le
   panneau se rafraîchit à la réception. Affichage agrandi (textes et listes ×1,5).
+
+> **Terminal partagé — mode d'emploi.** La session tmux `partagelan` vit sur **une**
+> machine : « Terminal partagé » rejoint la session **du pair** (via ssh), « Partagé
+> ici » rejoint la session **locale** de haikubuntu. Pour voir le même écran à deux :
+> l'un clique « Terminal partagé » vers l'autre, et l'autre rejoint **sa** session
+> locale — « Partagé ici » côté Linux, `tmux attach -t partagelan` dans Terminal
+> côté Mac.
 - **Glisser-déposer** depuis Caja : panneau **droit** → envoie au Mac ; panneau
   **gauche** → copie locale. **Clic droit** : envoyer/récupérer, ouvrir un dossier
   dans l'explorateur de fichiers (local, ou **SMB** pour un dossier du Mac :

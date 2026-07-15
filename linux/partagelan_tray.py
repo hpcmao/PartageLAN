@@ -909,6 +909,7 @@ class App:
         ttk.Entry(sshrow, textvariable=ssh_dir, width=28).pack(side="left", padx=4)
         ttk.Button(sshrow, text="Terminal SSH", command=self._open_ssh).pack(side="left", padx=4)
         ttk.Button(sshrow, text="Terminal partagé", command=self._open_shared_terminal).pack(side="left")
+        ttk.Button(sshrow, text="Partagé ici", command=self._open_local_shared_terminal).pack(side="left", padx=4)
 
         # ---- journal ----
         logrow = ttk.Frame(w); logrow.pack(fill="both", padx=12, pady=(0, 10))
@@ -1104,20 +1105,23 @@ class App:
         return self._vars["ssh_host"].get().strip() or f"{self.peer_name}@{self.cfg['peer_ip']}"
 
     def _launch_terminal(self, host, remote, fname, title):
-        """Écrit un petit .sh et l'ouvre dans un terminal (évite l'enfer des guillemets)."""
+        """Ouvre un terminal sur une commande ssh (évite l'enfer des guillemets)."""
+        # remote est quoté pour que $PATH/$SHELL s'expansent sur la machine
+        # DISTANTE (pas dans le bash local qui lance ssh)
+        sshline = (f"ssh -t {shlex.quote(host)} {shlex.quote(remote)}"
+                   if remote else f"ssh {shlex.quote(host)}")
+        body = "\n".join([f'echo "Connexion à {host} ..."', sshline,
+                          "echo",
+                          'read -rp "Session terminée — Entrée pour fermer." _'])
+        self._launch_terminal_script(body, fname, title)
+
+    def _launch_terminal_script(self, body, fname, title):
+        """Écrit un petit .sh et l'ouvre dans le premier terminal graphique trouvé."""
         try:
             ensure_config_dir()
             path = os.path.join(CONFIG_DIR, fname)
-            # remote est quoté pour que $PATH/$SHELL s'expansent sur la machine
-            # DISTANTE (pas dans le bash local qui lance ssh)
-            sshline = (f"ssh -t {shlex.quote(host)} {shlex.quote(remote)}"
-                       if remote else f"ssh {shlex.quote(host)}")
-            content = "\n".join(["#!/bin/bash",
-                                 f'echo "Connexion à {host} ..."', sshline,
-                                 "echo",
-                                 'read -rp "Session terminée — Entrée pour fermer." _'])
             with open(path, "w", encoding="utf-8") as f:
-                f.write(content + "\n")
+                f.write("#!/bin/bash\n" + body + "\n")
             os.chmod(path, 0o755)
             qpath = shlex.quote(path)
             candidates = [
@@ -1148,6 +1152,15 @@ class App:
                   "command -v tmux >/dev/null 2>&1 || { echo tmux introuvable sur le Mac; exec $SHELL -l; }; "
                   "tmux new-session -A -s partagelan")
         self._launch_terminal(host, remote, "_term_partage.sh", "PartageLAN - Terminal partagé")
+
+    def _open_local_shared_terminal(self):
+        """Rejoint (ou crée) la session tmux locale « partagelan » de haikubuntu.
+        À utiliser quand l'AUTRE machine lance son Terminal partagé vers ici :
+        les deux terminaux montrent alors le même écran."""
+        body = "\n".join(['echo "Session partagée locale (tmux -s partagelan) ..."',
+                          "tmux new-session -A -s partagelan"])
+        self._launch_terminal_script(body, "_term_partage_ici.sh",
+                                     "PartageLAN - Partagé ici")
 
     def _on_win_configure(self, event):
         """Mémorisation immédiate (débouncée) de la taille et de la position."""
