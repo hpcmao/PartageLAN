@@ -931,7 +931,6 @@ class App:
         ttk.Entry(sshrow, textvariable=ssh_dir, width=28).pack(side="left", padx=4)
         ttk.Button(sshrow, text="Terminal SSH", command=self._open_ssh).pack(side="left", padx=4)
         ttk.Button(sshrow, text="Terminal partagé", command=self._open_shared_terminal).pack(side="left")
-        ttk.Button(sshrow, text="Partagé ici", command=self._open_local_shared_terminal).pack(side="left", padx=4)
 
         # ---- journal ----
         logrow = ttk.Frame(w); logrow.pack(fill="both", padx=12, pady=(0, 10))
@@ -1164,25 +1163,15 @@ class App:
             self.log(f"Échec {title} : {e}")
 
     def _open_shared_terminal(self):
-        host = self._default_ssh_host()
-        self._vars["ssh_host"].set(host)
-        self.cfg["ssh_host"] = host
-        save_config(self.cfg)
-        # Même nom de session que l'app Mac ("partagelan") => terminal réellement partagé.
-        # PATH ajouté pour trouver tmux (MacPorts/Homebrew) dans un shell SSH non-interactif.
-        remote = (TMUX_PATH
-                  + "command -v tmux >/dev/null 2>&1 || { echo tmux introuvable sur le Mac; exec $SHELL -l; }; "
-                  + tmux_join_cmd(None))
-        self._launch_terminal(host, remote, "_term_partage.sh", "PartageLAN - Terminal partagé")
-
-    def _open_local_shared_terminal(self):
-        """Rejoint (ou crée) la session tmux locale « partagelan » de haikubuntu.
-        À utiliser quand l'AUTRE machine lance son Terminal partagé vers ici :
-        les deux terminaux montrent alors le même écran."""
-        body = "\n".join([f'echo "Session partagée locale (tmux : {SHARED_TMUX}) ..."',
-                          tmux_join_cmd(None)])
-        self._launch_terminal_script(body, "_term_partage_ici.sh",
-                                     "PartageLAN - Partagé ici")
+        """Comme l'app Mac : rejoint (ou crée) la session tmux partagée LOCALE de
+        cette machine — le pendant du « Terminal SSH », qui rejoint celle du pair.
+        Si l'autre machine a ouvert un Terminal SSH vers ici, les deux terminaux
+        montrent et pilotent le même écran."""
+        body = "\n".join(
+            [f'echo "Terminal partagé (tmux : {SHARED_TMUX}) — session locale de {pl.MACHINE_NAME}"',
+             tmux_join_cmd(None)])
+        self._launch_terminal_script(body, "_term_partage.sh",
+                                     "PartageLAN - Terminal partagé")
 
     def _on_win_configure(self, event):
         """Mémorisation immédiate (débouncée) de la taille et de la position."""
