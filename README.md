@@ -77,3 +77,12 @@ redemander une autorisation à chaque compilation. À défaut de certificat, rep
 
 Désactiver le lancement automatique :
 `launchctl bootout gui/$(id -u)/fr.vemao.partagelan && rm ~/Library/LaunchAgents/fr.vemao.partagelan.plist`
+
+## Portages (même protocole, port 7365)
+
+Le PC 10.0.0.5 est en triple-boot ; chaque OS a son client PartageLAN :
+
+- **Windows** (`winjeux`) : client Python à deux panneaux — `windows/`
+  (voir `windows/README.md`).
+- **Linux** (`haikubuntu`, Ubuntu MATE) : client Python à deux panneaux — `linux/`
+  (voir `linux/README.md`).

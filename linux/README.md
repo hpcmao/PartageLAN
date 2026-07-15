@@ -108,16 +108,19 @@ Un seul OS démarré à la fois sur 10.0.0.5 → pas de conflit d'IP. Depuis le 
 prévoir l'alias SSH `haikubuntu` avec `HostKeyAlias` dans `~/.ssh/config` (voir
 `windows/README.md`, remplacer `pclinux` par `haikubuntu`).
 
-## SSH : le Mac entre dans haikubuntu (à activer)
+## SSH : en place dans les deux sens (15/07/2026)
 
-```bash
-sudo apt install -y openssh-server && sudo systemctl enable --now ssh
-sudo ufw allow from 10.0.0.0/24 to any port 22 proto tcp
-```
+- **openssh-server** actif sur haikubuntu, port 22 ouvert **LAN seulement**
+  (`ufw allow from 10.0.0.0/24 to any port 22 proto tcp`).
+- **Clés échangées** : `ssh vemao@10.0.0.4` depuis haikubuntu et `ssh haikubuntu`
+  depuis le Mac, sans mot de passe. Le `~/.ssh/config` du Mac contient les **alias
+  multiboot** (`haikubuntu` / `winjeux` / `hpcmultimedia`, avec `HostKeyAlias`) pour
+  que les clés d'hôte des trois OS de 10.0.0.5 ne se marchent plus dessus.
+- `tmux` installé des deux côtés → session partagée `partagelan` (voir mode d'emploi
+  plus haut).
 
-(profils SudoManager : « Install » puis « Admin »). Ensuite depuis vemao :
-`ssh-copy-id haikubuntu@10.0.0.5`. Le bouton « Terminal partagé » suppose `tmux`
-côté machine distante (présent sur le Mac).
+En cas de réinstallation : `sudo apt install -y openssh-server && sudo systemctl
+enable --now ssh`, rouvrir le port 22, puis refaire les `ssh-copy-id`.
 
 ## Désactiver le lancement automatique
 

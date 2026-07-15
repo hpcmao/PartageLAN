@@ -88,9 +88,10 @@ l'accueil** `C:\Users\winjeux` (`dir_for_ls`) au lieu d'une erreur.
 ### Multi-boot : `~/.ssh/config` avec `HostKeyAlias`
 
 Cet ordinateur est en **triple-boot** (macOS `hpcmultimedia`, Windows `winjeux`, Linux
-`pclinux`) — tous en **10.0.0.5**, un seul démarré à la fois. Chaque OS a une **clé d'hôte SSH
+`haikubuntu`) — tous en **10.0.0.5**, un seul démarré à la fois. Chaque OS a une **clé d'hôte SSH
 différente** → conflit `known_hosts` à chaque changement. La solution : un alias par OS avec
-`HostKeyAlias` (chaque alias mémorise sa propre clé). Sur le Mac `vemao`, dans `~/.ssh/config` :
+`HostKeyAlias` (chaque alias mémorise sa propre clé). Sur le Mac `vemao`, dans `~/.ssh/config`
+(en place depuis le 15/07/2026) :
 
 ```sshconfig
 Host winjeux
@@ -103,13 +104,13 @@ Host hpcmultimedia
     User <compte-macos>
     HostKeyAlias hpcmultimedia
 
-Host pclinux
+Host haikubuntu
     HostName 10.0.0.5
-    User <compte-linux>
-    HostKeyAlias pclinux
+    User haikubuntu
+    HostKeyAlias haikubuntu
 ```
 
-Ensuite : `ssh winjeux` / `ssh hpcmultimedia` / `ssh pclinux` — sans conflit, sans mot de passe
+Ensuite : `ssh winjeux` / `ssh hpcmultimedia` / `ssh haikubuntu` — sans conflit, sans mot de passe
 (après autorisation de la clé de vemao sur chaque OS). Voir `ETAT_13-07-2026.md` pour le reste à faire.
 
 ## Repères réseau
@@ -118,7 +119,7 @@ Ensuite : `ssh winjeux` / `ssh hpcmultimedia` / `ssh pclinux` — sans conflit, 
 |------------------|-------------------------|----------|--------------------------------------|
 | Cet ordi         | **winjeux** (Windows)   | 10.0.0.5 | ✅ OpenSSH (clé)                     |
 | Cet ordi         | hpcmultimedia (macOS)   | 10.0.0.5 | ⏳ à activer (Session à distance)    |
-| Cet ordi         | pclinux (Linux)         | 10.0.0.5 | ⏳ à activer (openssh-server)        |
+| Cet ordi         | haikubuntu (Linux)      | 10.0.0.5 | ✅ OpenSSH (clé) — cf. `linux/`      |
 | Autre            | vemao (macOS)           | 10.0.0.4 | pilote / app PartageLAN native      |
 
 Triple-boot : un seul OS démarré à la fois sur 10.0.0.5 → aucun conflit d'IP. `vemao` (10.0.0.4)
